@@ -214,12 +214,75 @@ class StorefrontApi {
   Future<Order> order(String idOrNumber) async => Order.fromJson(
       await _request('GET', '/orders/${_segment(idOrNumber)}', auth: true));
 
-  Future<Order> cancelOrder(String id) async => Order.fromJson(
-      await _request('POST', '/orders/${_segment(id)}/cancel', auth: true));
+  /// Allowed until the kitchen starts; afterwards the API answers 409.
+  Future<Order> cancelOrder(String id, {String? reason}) async =>
+      Order.fromJson(await _request('POST', '/orders/${_segment(id)}/cancel',
+          auth: true, body: reason == null ? null : {'reason': reason}));
 
   Future<Page<OrderEvent>> orderHistory(String id) async => Page.fromJson(
       await _request('GET', '/orders/${_segment(id)}/history', auth: true),
       OrderEvent.fromJson);
+
+  /// Live updates for one order — `event: status` when it moves and
+  /// `event: driver_location` while it is on its way. Bearer-authenticated
+  /// like every other route, so it is read as a stream rather than through a
+  /// browser-style EventSource. Ends when the server closes the connection;
+  /// cancel the subscription to stop listening.
+  Stream<OrderLiveEvent> orderEvents(String id) async* {
+    final request = http.Request('GET', _uri('/orders/${_segment(id)}/events'))
+      ..headers['Accept'] = 'text/event-stream';
+    final value = token?.call();
+    if (value != null && value.isNotEmpty)
+      request.headers['Authorization'] = 'Bearer $value';
+    final http.StreamedResponse response;
+    try {
+      response = await _client.send(request).timeout(timeout);
+    } on TimeoutException {
+      throw const StorefrontApiError(
+          0, 'timeout', 'The store took too long to answer. Try again.');
+    } catch (_) {
+      throw const StorefrontApiError(
+          0, 'offline', 'Could not reach the store. Check your connection.');
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StorefrontApiError(response.statusCode, 'events_failed',
+          'Live updates are unavailable for this order.');
+    }
+    yield* parseOrderEvents(response.stream);
+  }
+
+  // --- reviews ---------------------------------------------------------------
+
+  /// Reviews a delivered order, once. Ratings are 1–5; a pickup order has no
+  /// delivery rating.
+  Future<OrderReview> createReview(String orderId,
+          {int? foodRating,
+          String? foodComment,
+          int? deliveryRating,
+          String? deliveryComment}) async =>
+      OrderReview.fromJson(await _request(
+          'POST', '/orders/${_segment(orderId)}/review',
+          auth: true,
+          body: {
+            if (foodRating != null) 'food_rating': foodRating,
+            if (foodComment != null && foodComment.trim().isNotEmpty)
+              'food_comment': foodComment.trim(),
+            if (deliveryRating != null) 'delivery_rating': deliveryRating,
+            if (deliveryComment != null && deliveryComment.trim().isNotEmpty)
+              'delivery_comment': deliveryComment.trim(),
+          }));
+
+  /// The review left on an order; a 404 when there is none yet.
+  Future<OrderReview> review(String orderId) async => OrderReview.fromJson(
+      await _request('GET', '/orders/${_segment(orderId)}/review', auth: true));
+
+  /// A store's reviews, newest first. Public.
+  Future<Page<OrderReview>> storeReviews(String storeId,
+          {int? limit, String? cursor}) async =>
+      Page.fromJson(
+          await _request('GET', '/stores/${_segment(storeId)}/reviews',
+              query: {'limit': limit, 'cursor': cursor}),
+          OrderReview.fromJson);
 
   // --- account (session required) ------------------------------------------
 
@@ -241,5 +304,54 @@ class StorefrontApi {
   Future<void> deleteAddress(String id) =>
       _request('DELETE', '/addresses/${_segment(id)}', auth: true);
 
+  /// Emails a confirmation link to [newEmail]; nothing changes until it is
+  /// followed.
+  Future<void> changeEmail(String newEmail) =>
+      _request('POST', '/auth/email/change',
+          auth: true, body: {'new_email': newEmail.trim()});
+
+  /// Registers this device for order push notifications (FCM token).
+  Future<void> registerDeviceToken(String deviceToken,
+          {required String platform}) =>
+      _request('POST', '/me/device-tokens',
+          auth: true, body: {'token': deviceToken, 'platform': platform});
+
+  /// Unsubscribes this device, e.g. on sign-out.
+  Future<void> deleteDeviceToken(String deviceToken) =>
+      _request('DELETE', '/me/device-tokens',
+          auth: true, body: {'token': deviceToken});
+
   void close() => _client.close();
+}
+
+/// Parses a server-sent-event stream into order events. Comment lines
+/// (`: ping`) keep the connection alive and are skipped, as are frames this
+/// version does not know.
+Stream<OrderLiveEvent> parseOrderEvents(Stream<List<int>> bytes) async* {
+  var type = 'message';
+  final data = StringBuffer();
+  await for (final line
+      in bytes.transform(utf8.decoder).transform(const LineSplitter())) {
+    if (line.isEmpty) {
+      if (data.isNotEmpty) {
+        try {
+          final json = jsonDecode(data.toString());
+          if (json is Map<String, dynamic> &&
+              (type == 'status' || type == 'driver_location'))
+            yield OrderLiveEvent(type, json);
+        } on FormatException {
+          // A torn frame; the next one is complete.
+        }
+      }
+      type = 'message';
+      data.clear();
+    } else if (line.startsWith(':')) {
+      continue;
+    } else if (line.startsWith('event:')) {
+      type = line.substring(6).trim();
+    } else if (line.startsWith('data:')) {
+      if (data.isNotEmpty) data.write('\n');
+      data.write(line.substring(5).trimLeft());
+    }
+  }
 }

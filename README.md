@@ -7,16 +7,21 @@ the part of a customer storefront that stays centrally maintained.
   - the store directory, menus, cuisines and delivery options;
   - Places address search and details;
   - guest, sign-up, sign-in and password-reset sessions;
-  - orders, quotes and order history;
-  - the account and addresses.
+  - orders, quotes, cancelling, order history and live order events;
+  - reviews of an order, and a store's reviews;
+  - the account, addresses, email change and push device tokens.
 - `Storefront` holds the customer flow:
   - where the customer is and the stores near them;
   - the chosen store's menu;
-  - the options picked for a product, and the cart.
+  - the options picked for a product, and the cart (with a note per line);
+  - checkout (`StorefrontCheckout`): delivery or pickup, address and
+    instructions, delivery preset, payment method, tip and order notes;
+  - the quote, placing the order, and following it live;
+  - the customer's orders, reviews and saved addresses.
 
   `bindings()` exposes all of it under the same names Upskale Studio pages
   read (`stores`, `store`, `menu`, `products`, `cart`, `cartTotal`,
-  `configuration`…).
+  `configuration`, `checkout`, `quote`, `orders`, `order`, `review`…).
 - `OptionGroup` / `OptionSelection` price a product's options, nested ones
   included, and turn them into the order API's `selections`.
 
@@ -40,6 +45,20 @@ storefront.setLocation(await storefront.resolveAddress(placeId));
 await storefront.searchStores(query: 'pizza');
 await storefront.selectStore(storefront.stores.first.id);
 storefront.addConfigured(product.json, quantity: 2);
+
+// Checkout: the quote and the order are built from the same choices, so
+// the total shown is the total charged.
+storefront.checkout.update({
+  'customer_name': 'Ama',
+  'customer_phone': '+27820000000',
+  'fulfilment': 'delivery',
+  'delivery_address_line1': '1 Main Road',
+  'payment_method': 'card',
+});
+storefront.checkout.tipPercent(10, storefront.cart.totalCents);
+final quote = await storefront.refreshQuote();
+final order = await storefront.placeOrder(); // then followed live
+await storefront.submitReview(foodRating: 5); // once it is delivered
 ```
 
 `Storefront` is a `ChangeNotifier`, so you can listen to it with

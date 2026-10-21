@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'cart.dart';
+import 'checkout.dart';
 import 'client.dart';
 import 'config.dart';
 import 'errors.dart';
@@ -16,7 +19,8 @@ enum AddToCartResult { added, unavailable, needsOptions }
 
 /// A storefront's whole customer flow: where the customer is, the stores
 /// that serve them, the chosen store's menu, the options picked for a
-/// product, and the cart.
+/// product, the cart, checkout, the customer's orders and reviews, and
+/// their account.
 ///
 /// One per app, usually [Storefront.instance] after [Storefront.configure].
 /// Without a configured API it still keeps a cart and option choices, so an
@@ -25,6 +29,7 @@ class Storefront extends ChangeNotifier {
   Storefront({this.api, StorefrontTokenStore? tokens})
       : session = api == null ? null : StorefrontSession(api, store: tokens) {
     cart.addListener(notifyListeners);
+    checkout.addListener(notifyListeners);
     session?.addListener(notifyListeners);
   }
 
@@ -52,6 +57,7 @@ class Storefront extends ChangeNotifier {
   final StorefrontApi? api;
   final StorefrontSession? session;
   final cart = StorefrontCart();
+  final checkout = StorefrontCheckout();
 
   bool get connected => api != null;
 
@@ -225,6 +231,249 @@ class Storefront extends ChangeNotifier {
     return AddToCartResult.added;
   }
 
+  // --- checkout ---------------------------------------------------------------
+
+  OrderQuote? quote;
+  StorefrontStatus quoteStatus = StorefrontStatus.idle;
+  StorefrontStatus placeStatus = StorefrontStatus.idle;
+  int _quoteRequest = 0;
+
+  /// The validation problems from the last place attempt, by field.
+  Map<String, String> fieldErrors = const {};
+
+  String? get _cartStoreId => cart.storeId ?? store?.id;
+
+  /// Prices the cart with the current [checkout] choices without placing
+  /// it. Call again when the tip, payment method or delivery changes; only
+  /// the latest answer is kept.
+  Future<OrderQuote?> refreshQuote() async {
+    final storeId = _cartStoreId;
+    if (storeId == null || cart.isEmpty) {
+      quote = null;
+      quoteStatus = StorefrontStatus.idle;
+      notifyListeners();
+      return null;
+    }
+    final request = ++_quoteRequest;
+    quoteStatus = StorefrontStatus.loading;
+    notifyListeners();
+    try {
+      await session!.ensure();
+      if (checkout.delivery) checkout.useLocation(location);
+      final next =
+          await _api.quoteOrder(checkout.quoteBody(storeId, cart.orderItems()));
+      if (request == _quoteRequest) {
+        quote = next;
+        quoteStatus = StorefrontStatus.ready;
+      }
+      return next;
+    } catch (failure) {
+      if (request == _quoteRequest) {
+        quoteStatus = StorefrontStatus.error;
+        error = _message(failure);
+      }
+      return null;
+    } finally {
+      if (request == _quoteRequest) notifyListeners();
+    }
+  }
+
+  /// Places the cart as an order. On success the cart empties and the order
+  /// becomes [order], followed live; on a validation failure [fieldErrors]
+  /// names the fields to fix and the error is rethrown.
+  Future<Order> placeOrder() async {
+    final storeId = _cartStoreId;
+    if (storeId == null || cart.isEmpty)
+      throw StateError('There is nothing in the cart to order.');
+    placeStatus = StorefrontStatus.loading;
+    error = null;
+    fieldErrors = const {};
+    notifyListeners();
+    try {
+      await session!.ensure();
+      if (checkout.delivery) checkout.useLocation(location);
+      final placed = await _api
+          .createOrder(checkout.orderBody(storeId, cart.orderItems()));
+      cart.clear();
+      checkout.resetForNextOrder();
+      quote = null;
+      order = placed;
+      review = null;
+      orders = [placed, ...orders.where((item) => item.id != placed.id)];
+      placeStatus = StorefrontStatus.ready;
+      unawaited(followOrder(placed.id));
+      return placed;
+    } catch (failure) {
+      placeStatus = StorefrontStatus.error;
+      error = _message(failure);
+      if (failure is StorefrontApiError)
+        fieldErrors = failure.fields ?? const {};
+      rethrow;
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  // --- orders -----------------------------------------------------------------
+
+  List<Order> orders = const [];
+  StorefrontStatus ordersStatus = StorefrontStatus.idle;
+
+  /// The order a tracking page shows, and its review once it has one.
+  Order? order;
+  OrderReview? review;
+
+  /// Where the driver is, while one is on the way.
+  StorefrontLocation? driverLocation;
+  StreamSubscription<OrderLiveEvent>? _following;
+
+  Future<List<Order>> loadOrders() async {
+    ordersStatus = StorefrontStatus.loading;
+    notifyListeners();
+    try {
+      await session!.ensure();
+      orders = (await _api.orders()).data;
+      ordersStatus = StorefrontStatus.ready;
+    } catch (failure) {
+      ordersStatus = StorefrontStatus.error;
+      error = _message(failure);
+    } finally {
+      notifyListeners();
+    }
+    return orders;
+  }
+
+  /// Opens an order by id or order number, with its review when delivered.
+  Future<Order> openOrder(String idOrNumber) async {
+    await session!.ensure();
+    final next = await _api.order(idOrNumber);
+    if (order?.id != next.id) {
+      review = null;
+      driverLocation = null;
+    }
+    order = next;
+    if (next.delivered) review = await _optional(() => _api.review(next.id));
+    notifyListeners();
+    return next;
+  }
+
+  /// Follows [orderId] live until the server ends the stream or another
+  /// order is followed, updating [order], [orders] and [driverLocation].
+  Future<void> followOrder(String orderId) async {
+    await _following?.cancel();
+    _following = null;
+    if (!connected) return;
+    await session!.ensure();
+    _following = _api.orderEvents(orderId).listen((event) {
+      if (event.type == 'status' && event.status != null) {
+        final status = {'status': event.status};
+        if (order?.id == orderId) order = order!.copyWith(status);
+        orders = [
+          for (final item in orders)
+            item.id == orderId ? item.copyWith(status) : item
+        ];
+        if (event.status == 'delivered' || event.status == 'cancelled')
+          driverLocation = null;
+      } else if (event.type == 'driver_location' &&
+          order?.id == orderId &&
+          event.latitude != null &&
+          event.longitude != null) {
+        driverLocation = StorefrontLocation(
+            label: order!.driverName ?? 'Driver',
+            latitude: event.latitude!,
+            longitude: event.longitude!);
+      }
+      notifyListeners();
+    }, onError: (Object _) {}, cancelOnError: true);
+  }
+
+  Future<void> stopFollowing() async {
+    await _following?.cancel();
+    _following = null;
+  }
+
+  /// Cancels [orderId] (the open order by default) while it still can be.
+  Future<Order> cancelOrder([String? orderId, String? reason]) async {
+    final id = orderId ?? order?.id;
+    if (id == null) throw StateError('No order is open.');
+    await session!.ensure();
+    final cancelled = await _api.cancelOrder(id, reason: reason);
+    if (order?.id == id) order = cancelled;
+    orders = [for (final item in orders) item.id == id ? cancelled : item];
+    notifyListeners();
+    return cancelled;
+  }
+
+  // --- reviews ----------------------------------------------------------------
+
+  List<OrderReview> reviews = const [];
+
+  /// Reviews the open order: delivered orders only, once. A pickup has no
+  /// delivery rating, so one given for it is dropped.
+  Future<OrderReview> submitReview(
+      {int? foodRating,
+      String? foodComment,
+      int? deliveryRating,
+      String? deliveryComment}) async {
+    final current = order;
+    if (current == null) throw StateError('No order is open.');
+    final delivery = current.fulfilmentType == 'delivery';
+    await session!.ensure();
+    review = await _api.createReview(current.id,
+        foodRating: foodRating,
+        foodComment: foodComment,
+        deliveryRating: delivery ? deliveryRating : null,
+        deliveryComment: delivery ? deliveryComment : null);
+    notifyListeners();
+    return review!;
+  }
+
+  /// The chosen store's reviews, newest first.
+  Future<List<OrderReview>> loadReviews({int limit = 20}) async {
+    final id = store?.id;
+    if (id == null) return const [];
+    reviews = (await _api.storeReviews(id, limit: limit)).data;
+    notifyListeners();
+    return reviews;
+  }
+
+  // --- account ----------------------------------------------------------------
+
+  List<Address> addresses = const [];
+
+  Future<List<Address>> loadAddresses() async {
+    await session!.ensure();
+    addresses = (await _api.addresses()).data;
+    notifyListeners();
+    return addresses;
+  }
+
+  /// Creates an address, or with [id] patches one (three-state: only the
+  /// keys in [body] change).
+  Future<Address> saveAddress(Json body, {String? id}) async {
+    await session!.ensure();
+    final saved = id == null
+        ? await _api.createAddress(body)
+        : await _api.updateAddress(id, body);
+    await loadAddresses();
+    return saved;
+  }
+
+  Future<void> deleteAddress(String id) async {
+    await session!.ensure();
+    await _api.deleteAddress(id);
+    if (checkout.addressId == id)
+      checkout.update({'delivery_address_id': null});
+    await loadAddresses();
+  }
+
+  /// Emails a confirmation to [newEmail]; the account changes once it is
+  /// followed.
+  Future<void> changeEmail(String newEmail) async {
+    await session!.ensure();
+    await _api.changeEmail(newEmail);
+  }
+
   // --- bindings ---------------------------------------------------------------
 
   /// What Studio pages read, by the same names as the preview: the store,
@@ -264,12 +513,29 @@ class Storefront extends ChangeNotifier {
         'valid': selection.valid,
         'addon_price_cents': selection.priceCents
       },
+      'checkout': checkout.toJson(),
+      if (quote != null) 'quote': quote!.json,
+      if (fieldErrors.isNotEmpty) 'checkoutErrors': fieldErrors,
+      'orders': [for (final item in orders) item.json],
+      if (order != null) ...{
+        'order': order!.json,
+        'orderItems': order!.items,
+      },
+      if (review != null) 'review': review!.json,
+      if (driverLocation != null) 'driverLocation': driverLocation!.toJson(),
+      if (reviews.isNotEmpty)
+        'reviews': [for (final item in reviews) item.json],
+      if (addresses.isNotEmpty)
+        'addresses': [for (final item in addresses) item.json],
+      if (session?.user != null) 'me': session!.user!.json,
     };
   }
 
   @override
   void dispose() {
+    _following?.cancel();
     cart.dispose();
+    checkout.dispose();
     session?.dispose();
     api?.close();
     super.dispose();

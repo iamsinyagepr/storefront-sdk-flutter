@@ -253,8 +253,59 @@ class Order {
   String get id => json['id'] as String;
   String get orderNumber => json['order_number'] as String? ?? id;
   String get status => json['status'] as String? ?? 'pending';
+  String get storeId => json['store_id'] as String? ?? '';
+  String? get storeName => json['store_name'] as String?;
+  String get fulfilmentType => json['fulfilment_type'] as String? ?? 'delivery';
+  String? get paymentMethod => json['payment_method'] as String?;
+  int get subtotalCents => _cents(json['subtotal_cents']);
+  int get deliveryFeeCents => _cents(json['delivery_fee_cents']);
+  int get discountCents => _cents(json['discount_cents']);
+  int get tipCents => _cents(json['tip_cents']);
   int get totalCents => _cents(json['total_cents']);
+  String? get notes => json['notes'] as String?;
+  String? get driverName => json['driver_name'] as String?;
+  String? get driverPhone => json['driver_phone'] as String?;
   List<Json> get items => _objects(json['items']);
+
+  /// Delivered orders can be reviewed; the server enforces it too.
+  bool get delivered => status == 'delivered';
+
+  /// Whether the customer may still cancel: until the kitchen starts.
+  /// Mirrors OrderStatus.CancellableByCustomer; the server has the final say.
+  bool get cancellable => status == 'pending' || status == 'confirmed';
+
+  /// This order with [changes] applied, e.g. a live status event.
+  Order copyWith(Json changes) => Order({...json, ...changes});
+}
+
+/// A frame from `GET /orders/{id}/events`: a new [status], or where the
+/// driver is.
+class OrderLiveEvent {
+  OrderLiveEvent(this.type, this.json);
+
+  /// `status` or `driver_location`.
+  final String type;
+  final Json json;
+  String? get status => json['status'] as String?;
+  double? get latitude => _double(json['latitude']);
+  double? get longitude => _double(json['longitude']);
+}
+
+/// `POST /orders/{id}/review`: ratings out of five for the food and, for a
+/// delivery, the delivery, each with an optional comment.
+class OrderReview {
+  OrderReview(this.json);
+  factory OrderReview.fromJson(dynamic json) =>
+      OrderReview(_object(json, 'review'));
+
+  final Json json;
+  String get id => json['id'] as String? ?? '';
+  String get orderId => json['order_id'] as String? ?? '';
+  int? get foodRating => (json['food_rating'] as num?)?.toInt();
+  String? get foodComment => json['food_comment'] as String?;
+  int? get deliveryRating => (json['delivery_rating'] as num?)?.toInt();
+  String? get deliveryComment => json['delivery_comment'] as String?;
+  String? get customerName => json['customer_name'] as String?;
 }
 
 class OrderEvent {
@@ -288,5 +339,9 @@ class OrderQuote {
   final Json json;
   int get itemsSubtotalCents => _cents(json['items_subtotal_cents']);
   int get deliveryFeeCents => _cents(json['delivery_fee_cents']);
+  int get tipCents => _cents(json['tip_cents']);
   int get totalCents => _cents(json['total_cents']);
+
+  /// The store's own charges that apply, e.g. a card surcharge.
+  List<Json> get charges => _objects(json['charges']);
 }

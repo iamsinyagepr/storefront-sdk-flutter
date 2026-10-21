@@ -24,6 +24,9 @@ class CartLine {
   final List<String> choices;
   final List<Map<String, dynamic>> selections;
 
+  /// What the customer asked of this line ("no onions"); sent with it.
+  String? notes;
+
   String get productId => '${product['id']}';
   String get name => '${product['name'] ?? ''}';
   int get totalCents => unitCents * quantity;
@@ -38,11 +41,16 @@ class CartLine {
         'unit_cents': unitCents,
         'line_total_cents': totalCents,
         'choices': choices,
+        'notes': notes,
       };
 
-  /// The order API's item: `{product_id, quantity, selections}`.
-  Map<String, dynamic> toOrderItem() =>
-      {'product_id': productId, 'quantity': quantity, 'selections': selections};
+  /// The order API's item: `{product_id, quantity, selections, notes?}`.
+  Map<String, dynamic> toOrderItem() => {
+        'product_id': productId,
+        'quantity': quantity,
+        'selections': selections,
+        if (notes != null && notes!.trim().isNotEmpty) 'notes': notes!.trim(),
+      };
 }
 
 /// The customer's cart, kept on the device until the order is placed.
@@ -88,6 +96,15 @@ class StorefrontCart extends ChangeNotifier {
       if (line.id == id) line.quantity = math.min(99, line.quantity + delta);
     }
     _lines.removeWhere((line) => line.quantity <= 0);
+    notifyListeners();
+  }
+
+  /// Sets a line's note; an empty one clears it.
+  void setNotes(String id, String? notes) {
+    for (final line in _lines) {
+      if (line.id == id)
+        line.notes = notes == null || notes.trim().isEmpty ? null : notes;
+    }
     notifyListeners();
   }
 
