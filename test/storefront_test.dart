@@ -480,4 +480,19 @@ void main() {
       expect(StorefrontLocationError(problem).message, isNotEmpty);
     }
   });
+
+  test('a single-store app loads its store at once', () async {
+    final calls = <http.Request>[];
+    final storefront = Storefront.configure(
+        apiBaseUrl: 'https://shop.example.com', storeId: 'store-1', client: _tenant(calls));
+    expect(storefront.pinnedStoreId, 'store-1');
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(calls.any((request) => request.url.path == '/api/v1/stores/store-1/menu'), isTrue);
+    expect(storefront.store?.id, 'store-1');
+    // A store that won't load is the menu's error, not a crash.
+    final missing = Storefront.configure(apiBaseUrl: 'https://shop.example.com', storeId: 'gone', client: _tenant([]));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(missing.menuStatus, StorefrontStatus.error);
+    expect(Storefront.configure(apiBaseUrl: 'https://shop.example.com', client: _tenant([])).pinnedStoreId, isNull);
+  });
 }

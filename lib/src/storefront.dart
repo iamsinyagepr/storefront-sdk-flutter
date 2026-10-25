@@ -41,6 +41,10 @@ class Storefront extends ChangeNotifier {
   static Storefront get instance => _instance ??= Storefront();
 
   /// Connects [instance] to a tenant API. Call once, before `runApp`.
+  ///
+  /// A single-store app passes its [storeId]: that store's menu starts
+  /// loading at once, and the app can open straight on it — no location or
+  /// store to choose ([pinnedStoreId]).
   static Storefront configure({
     required String apiBaseUrl,
     String? storeId,
@@ -48,12 +52,24 @@ class Storefront extends ChangeNotifier {
     http.Client? client,
   }) {
     _instance?.dispose();
-    return _instance = Storefront(
+    final storefront = _instance = Storefront(
       api: StorefrontApi(
           StorefrontConfig(apiBaseUrl: apiBaseUrl, storeId: storeId),
           client: client),
       tokens: tokens,
     );
+    if (storeId != null && storeId.isNotEmpty) {
+      // A failure shows as the menu's error (menuStatus, error), not as an
+      // unhandled error at start-up; the menu page offers to try again.
+      unawaited(storefront.selectStore(storeId).catchError((Object _) {}));
+    }
+    return storefront;
+  }
+
+  /// The one store a single-store app is built for, or null.
+  String? get pinnedStoreId {
+    final id = api?.config.storeId;
+    return id == null || id.isEmpty ? null : id;
   }
 
   final StorefrontApi? api;
