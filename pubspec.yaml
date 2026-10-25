@@ -3,7 +3,7 @@ description: >-
   The tenant API client, guest session, location and store search, menu,
   cart, checkout, orders, reviews and account for Flutter storefronts on
   Upskale Labs — the Dart counterpart of @sinyagepr/storefront-sdk.
-version: 0.2.0
+version: 0.3.0
 publish_to: none
 repository: https://github.com/iamsinyagepr/storefront-sdk-flutter
 
@@ -14,6 +14,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  geolocator: ^14.1.2
   http: ^1.2.0
 
 dev_dependencies:

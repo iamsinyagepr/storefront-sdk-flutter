@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show MissingPluginException;
+import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 
 import 'cart.dart';
@@ -100,6 +102,68 @@ class Storefront extends ChangeNotifier {
   void setLocation(StorefrontLocation? value) {
     location = value;
     notifyListeners();
+  }
+
+  /// The cities the business has stores in, once loaded ([loadCities]).
+  List<StoreCity> cities = const [];
+
+  /// Loads [cities]: the fallback when the customer's location can't be had,
+  /// or their search finds nothing. Never throws; an empty list is empty.
+  Future<List<StoreCity>> loadCities() async {
+    try {
+      cities = await _api.storeCities();
+      notifyListeners();
+    } catch (_) {
+      // No cities is the same as none to offer.
+    }
+    return cities;
+  }
+
+  /// Chooses a city as the location: its stores are what [searchStores] finds.
+  void chooseCity(StoreCity city) => setLocation(city.location);
+
+  /// The device's own location, asked for (once, if it hasn't been), named
+  /// ("Rosebank, Johannesburg") when the address can be looked up, and set as
+  /// [location]. Throws [StorefrontLocationError] when it can't be had: the
+  /// page then offers search and [cities].
+  Future<StorefrontLocation> locateDevice({Duration timeLimit = const Duration(seconds: 12)}) async {
+    final Position position;
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        throw const StorefrontLocationError(LocationProblem.servicesOff);
+      }
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied) {
+        throw const StorefrontLocationError(LocationProblem.denied);
+      }
+      if (permission == LocationPermission.deniedForever) {
+        throw const StorefrontLocationError(LocationProblem.deniedForever);
+      }
+      position = await Geolocator.getCurrentPosition(
+          locationSettings: LocationSettings(accuracy: LocationAccuracy.high, timeLimit: timeLimit));
+    } on StorefrontLocationError {
+      rethrow;
+    } on TimeoutException {
+      throw const StorefrontLocationError(LocationProblem.timeout);
+    } on UnsupportedError {
+      throw const StorefrontLocationError(LocationProblem.unsupported);
+    } on MissingPluginException {
+      throw const StorefrontLocationError(LocationProblem.unsupported);
+    }
+    var point = StorefrontLocation(
+        label: 'Your location', latitude: position.latitude, longitude: position.longitude);
+    try {
+      await session!.ensure();
+      final named = await _api.reverseGeocode(position.latitude, position.longitude);
+      if (named.label.isNotEmpty) point = named;
+    } catch (_) {
+      // Unnamed is still a place to find stores near.
+    }
+    setLocation(point);
+    return point;
   }
 
   // --- stores -----------------------------------------------------------------

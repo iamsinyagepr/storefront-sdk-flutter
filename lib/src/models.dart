@@ -218,6 +218,23 @@ class StorefrontLocation {
       {'label': label, 'latitude': latitude, 'longitude': longitude};
 }
 
+/// `GET /cities`: a city the business has stores in, and the middle of
+/// them — what a customer picks when their own location can't be used.
+class StoreCity {
+  StoreCity(this.json);
+  factory StoreCity.fromJson(dynamic json) => StoreCity(_object(json, 'city'));
+
+  final Json json;
+  String get name => json['name'] as String? ?? '';
+  double get latitude => _double(json['latitude']) ?? 0;
+  double get longitude => _double(json['longitude']) ?? 0;
+  int get stores => _cents(json['stores']);
+
+  /// The city as a location to find stores near.
+  StorefrontLocation get location =>
+      StorefrontLocation(label: name, latitude: latitude, longitude: longitude);
+}
+
 class Me {
   Me(this.json);
   factory Me.fromJson(dynamic json) => Me(_object(json, 'account'));

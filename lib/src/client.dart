@@ -130,6 +130,13 @@ class StorefrontApi {
   Future<Page<Cuisine>> cuisines() async =>
       Page.fromJson(await _request('GET', '/cuisines'), Cuisine.fromJson);
 
+  /// The cities with live stores, the most stores first.
+  Future<List<StoreCity>> storeCities() async {
+    final body = await _request('GET', '/cities');
+    final data = body is Map ? body['data'] : null;
+    return data is List ? [for (final item in data) StoreCity.fromJson(item)] : const [];
+  }
+
   Future<DeliveryOptions> deliveryOptions(String idOrSlug) async =>
       DeliveryOptions.fromJson(await _request(
           'GET', '/stores/${_segment(idOrSlug)}/delivery-options'));
@@ -153,6 +160,14 @@ class StorefrontApi {
     return data is List
         ? [for (final item in data) PlacePrediction.fromJson(item)]
         : const [];
+  }
+
+  /// Names a point ("Rosebank, Johannesburg"): the customer's own location.
+  Future<StorefrontLocation> reverseGeocode(double latitude, double longitude) async {
+    final body = await _request('GET', '/places/reverse',
+        auth: true, query: {'latitude': latitude, 'longitude': longitude});
+    final label = body is Map ? body['label'] as String? ?? '' : '';
+    return StorefrontLocation(label: label, latitude: latitude, longitude: longitude);
   }
 
   /// Resolves a prediction into a labelled point.

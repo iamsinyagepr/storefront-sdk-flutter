@@ -437,4 +437,47 @@ void main() {
         throwsA(isA<StorefrontApiError>()
             .having((e) => e.error, 'error', 'offline')));
   });
+
+  test('store cities and naming a point', () async {
+    final calls = <http.Request>[];
+    final api = StorefrontApi(
+        StorefrontConfig(apiBaseUrl: 'https://shop.example.com'),
+        token: () => 'guest-token',
+        client: MockClient((request) async {
+          calls.add(request);
+          switch (request.url.path) {
+            case '/api/v1/cities':
+              return http.Response(
+                  jsonEncode({
+                    'data': [
+                      {'name': 'Johannesburg', 'latitude': -26.15, 'longitude': 28.05, 'stores': 3},
+                      {'name': 'Pretoria', 'latitude': -25.74, 'longitude': 28.19, 'stores': 1},
+                    ]
+                  }),
+                  200);
+            case '/api/v1/places/reverse':
+              return http.Response(
+                  jsonEncode({'label': 'Rosebank, Johannesburg', 'city': 'Johannesburg'}), 200);
+          }
+          return http.Response('{}', 404);
+        }));
+    final cities = await api.storeCities();
+    expect(cities.map((c) => c.name), ['Johannesburg', 'Pretoria']);
+    expect(cities.first.stores, 3);
+    expect(cities.first.location.label, 'Johannesburg');
+    expect(cities.first.location.latitude, -26.15);
+
+    final point = await api.reverseGeocode(-26.1467, 28.0436);
+    expect(point.label, 'Rosebank, Johannesburg');
+    expect(point.latitude, -26.1467);
+    final reverse = calls.last;
+    expect(reverse.url.queryParameters, {'latitude': '-26.1467', 'longitude': '28.0436'});
+    expect(reverse.headers['Authorization'], 'Bearer guest-token');
+  });
+
+  test('location problems read as sentences', () {
+    for (final problem in LocationProblem.values) {
+      expect(StorefrontLocationError(problem).message, isNotEmpty);
+    }
+  });
 }
