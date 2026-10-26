@@ -16,6 +16,7 @@ export 'src/cart.dart';
 export 'src/checkout.dart';
 export 'src/client.dart';
 export 'src/config.dart';
+export 'src/delivery_map.dart';
 export 'src/errors.dart';
 export 'src/models.dart';
 export 'src/options.dart';

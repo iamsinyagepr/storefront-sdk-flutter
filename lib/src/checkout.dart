@@ -33,7 +33,20 @@ class StorefrontCheckout extends ChangeNotifier {
   /// distance (`GET /stores/{id}/delivery-options`).
   String? deliveryPresetId;
 
+  /// The customer confirmed [latitude], [longitude] on a map
+  /// ([confirmDeliveryPoint]): what a store pricing by distance asks for.
+  bool pointConfirmed = false;
+
   bool get delivery => fulfilment == 'delivery';
+
+  /// The delivery point the customer confirmed on a map, and so a delivery.
+  void confirmDeliveryPoint(double latitude, double longitude) {
+    this.latitude = latitude;
+    this.longitude = longitude;
+    pointConfirmed = true;
+    fulfilment = 'delivery';
+    notifyListeners();
+  }
 
   /// Applies [changes] by field name (`tip_cents`, `notes`, …), the names a
   /// Studio form or a JSON body uses. Unknown names are ignored.
@@ -155,6 +168,9 @@ class StorefrontCheckout extends ChangeNotifier {
         'delivery_address_line2': addressLine2,
         'delivery_instructions': deliveryInstructions,
         'delivery_preset_id': deliveryPresetId,
+        'delivery_latitude': latitude,
+        'delivery_longitude': longitude,
+        'delivery_point_confirmed': pointConfirmed,
       };
 
   /// After an order is placed: the per-order choices start over, who the

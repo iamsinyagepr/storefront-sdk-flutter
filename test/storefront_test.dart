@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -514,6 +515,52 @@ void main() {
     expect(storefront.configuration(_burger).labels, ['Large', 'Salad']);
     storefront.toggleById(_burger, 'nope', 'cheese');
     expect(storefront.configuration(_burger).labels, ['Large', 'Salad']);
+  });
+
+  test('delivery follows the store: a named place, or a point confirmed on the map', () {
+    final storefront = Storefront();
+    storefront.store = Store.fromJson({'id': 's1', 'name': 'Sunday Kitchen', 'slug': 's', 'delivery_fee_cents': 2500});
+    storefront.checkout.update({'fulfilment': 'delivery'});
+    // By distance (the default): a point must be confirmed.
+    expect(storefront.deliveryProblem, 'Confirm your delivery location on the map.');
+    expect(storefront.deliveryFeeCents, 2500, reason: "unquoted, the store's flat fee");
+    storefront.checkout.confirmDeliveryPoint(-26.2, 28.04);
+    expect(storefront.deliveryProblem, isNull);
+    expect(storefront.bindings()['checkout']['delivery_point_confirmed'], isTrue);
+    expect(storefront.checkout.quoteBody('s1', const [])['delivery_latitude'], -26.2);
+    // Named places: one must be chosen, and its fee is the delivery fee.
+    storefront.deliveryOptions = DeliveryOptions({
+      'mode': 'preset',
+      'presets': [
+        {'id': 'p1', 'place_name': 'Rosebank', 'fee_cents': 1500},
+        {'id': 'p2', 'place_name': 'Sandton', 'fee_cents': 3000},
+      ],
+    });
+    expect(storefront.deliveryProblem, 'Choose where we should deliver.');
+    storefront.checkout.update({'delivery_preset_id': 'p2'});
+    expect(storefront.deliveryProblem, isNull);
+    expect(storefront.deliveryFeeCents, 3000);
+    expect(storefront.bindings()['deliveryFeeCents'], 3000);
+    // A pickup needs neither.
+    storefront.checkout.update({'fulfilment': 'pickup', 'delivery_preset_id': null});
+    expect(storefront.deliveryProblem, isNull);
+  });
+
+  testWidgets('the delivery map confirms the point its pin is on', (tester) async {
+    final confirmed = <List<double>>[];
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: StorefrontDeliveryMap(
+          latitude: -26.2041,
+          longitude: 28.0473,
+          onConfirm: (latitude, longitude) => confirmed.add([latitude, longitude]),
+        ),
+      ),
+    ));
+    await tester.pump();
+    await tester.tap(find.text('Confirm this location'));
+    await tester.pump();
+    expect(confirmed.single, [-26.2041, 28.0473]);
   });
 
   test('places and cities bind for a page to list', () async {

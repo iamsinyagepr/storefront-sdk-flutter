@@ -604,6 +604,32 @@ class Storefront extends ChangeNotifier {
     await _api.changeEmail(newEmail);
   }
 
+  // --- delivery -------------------------------------------------------------
+
+  /// What a delivery costs as the checkout stands: the chosen named place's
+  /// fee, the quote's (priced by distance), or the store's flat fee.
+  int get deliveryFeeCents {
+    final presetId = checkout.deliveryPresetId;
+    if (presetId != null) {
+      for (final preset in deliveryOptions?.presets ?? const <Json>[]) {
+        if ('${preset['id']}' == presetId) return _cents(preset['fee_cents']);
+      }
+    }
+    if (quote != null && checkout.delivery) return quote!.deliveryFeeCents;
+    return _cents(store?.json['delivery_fee_cents']);
+  }
+
+  /// Why a delivery can't be placed yet, as the store has set delivery up:
+  /// a store with named places needs one chosen, one pricing by distance a
+  /// point confirmed on the map. Null when it can go (or it's a pickup).
+  String? get deliveryProblem {
+    if (!checkout.delivery) return null;
+    if (deliveryOptions?.mode == 'preset') {
+      return checkout.deliveryPresetId == null ? 'Choose where we should deliver.' : null;
+    }
+    return checkout.pointConfirmed ? null : 'Confirm your delivery location on the map.';
+  }
+
   // --- bindings ---------------------------------------------------------------
 
   /// What Studio pages read, by the same names as the preview: the store,
@@ -653,6 +679,7 @@ class Storefront extends ChangeNotifier {
         'deliveryPresets': presets,
         'deliveryPreset': presets!.isEmpty ? null : presets.first,
       },
+      'deliveryFeeCents': deliveryFeeCents,
       'cart': [for (final line in cart.lines) line.toJson()],
       'cartCount': cart.count,
       'cartTotal': cart.totalCents,
