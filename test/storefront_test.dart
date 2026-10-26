@@ -495,4 +495,45 @@ void main() {
     expect(missing.menuStatus, StorefrontStatus.error);
     expect(Storefront.configure(apiBaseUrl: 'https://shop.example.com', client: _tenant([])).pinnedStoreId, isNull);
   });
+
+  test('option groups bind flat, nested groups after their choice, toggled by id', () {
+    final storefront = Storefront();
+    List<Map<String, dynamic>> groups() =>
+        storefront.bindings(product: _burger)['optionGroups'] as List<Map<String, dynamic>>;
+    expect(groups().map((group) => group['label']), ['Portion', 'Extras']);
+    storefront.toggleById(_burger, 'portion', 'large');
+    expect(groups().map((group) => group['id']), ['portion', 'side', 'extras'],
+        reason: "Large's side follows it");
+    expect(groups()[1]['depth'], 1);
+    expect((groups()[0]['choices'] as List)[1]['selected'], isTrue);
+    storefront.toggleById(_burger, 'side', 'salad');
+    storefront.toggleById(_burger, 'extras', 'cheese');
+    expect(storefront.configuration(_burger).valid, isTrue);
+    expect(storefront.configuration(_burger).labels, ['Large', 'Salad', 'Cheese']);
+    storefront.toggleById(_burger, 'extras', 'cheese');
+    expect(storefront.configuration(_burger).labels, ['Large', 'Salad']);
+    storefront.toggleById(_burger, 'nope', 'cheese');
+    expect(storefront.configuration(_burger).labels, ['Large', 'Salad']);
+  });
+
+  test('places and cities bind for a page to list', () async {
+    final storefront = Storefront(
+        api: StorefrontApi(StorefrontConfig(apiBaseUrl: 'https://shop.example.com'),
+            client: MockClient((request) async => switch (request.url.path) {
+                  '/api/v1/cities' => http.Response(
+                      jsonEncode({
+                        'data': [
+                          {'name': 'Johannesburg', 'latitude': -26.15, 'longitude': 28.05, 'stores': 3}
+                        ]
+                      }),
+                      200),
+                  _ => http.Response('{}', 404),
+                })));
+    await storefront.loadCities();
+    final bindings = storefront.bindings();
+    expect((bindings['cities'] as List).single['label'], 'Johannesburg');
+    expect(bindings['places'], isEmpty);
+    expect(bindings['locating'], isFalse);
+    expect(await storefront.searchPlaces('ab'), isEmpty, reason: 'too short to search');
+  });
 }

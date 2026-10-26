@@ -62,6 +62,10 @@ class Storefront extends ChangeNotifier {
       // A failure shows as the menu's error (menuStatus, error), not as an
       // unhandled error at start-up; the menu page offers to try again.
       unawaited(storefront.selectStore(storeId).catchError((Object _) {}));
+    } else {
+      // The cities a location page offers when the device's location or a
+      // search comes up empty; loadCities never throws.
+      unawaited(storefront.loadCities());
     }
     return storefront;
   }
@@ -110,6 +114,22 @@ class Storefront extends ChangeNotifier {
         latitude: location?.latitude, longitude: location?.longitude);
   }
 
+  /// The latest [searchPlaces] answer, for a page to list (`places`).
+  List<PlacePrediction> places = const [];
+  int _placesRequest = 0;
+
+  /// [searchAddresses], kept in [places]: only the latest search's answer
+  /// is kept, and under three characters there is nothing to suggest.
+  Future<List<PlacePrediction>> searchPlaces(String input) async {
+    final request = ++_placesRequest;
+    final found = await searchAddresses(input);
+    if (request == _placesRequest) {
+      places = found;
+      notifyListeners();
+    }
+    return found;
+  }
+
   Future<StorefrontLocation> resolveAddress(String placeId) async {
     await session!.ensure();
     return _api.placeDetails(placeId);
@@ -143,6 +163,26 @@ class Storefront extends ChangeNotifier {
   /// [location]. Throws [StorefrontLocationError] when it can't be had: the
   /// page then offers search and [cities].
   Future<StorefrontLocation> locateDevice({Duration timeLimit = const Duration(seconds: 12)}) async {
+    locating = true;
+    locationError = null;
+    notifyListeners();
+    try {
+      return await _locateDevice(timeLimit);
+    } on StorefrontLocationError catch (failure) {
+      locationError = failure.message;
+      rethrow;
+    } finally {
+      locating = false;
+      notifyListeners();
+    }
+  }
+
+  /// [locateDevice] is finding the device (`locating`), or why it couldn't
+  /// (`locationError`), for a page to show.
+  bool locating = false;
+  String? locationError;
+
+  Future<StorefrontLocation> _locateDevice(Duration timeLimit) async {
     final Position position;
     try {
       if (!await Geolocator.isLocationServiceEnabled()) {
@@ -276,6 +316,16 @@ class Storefront extends ChangeNotifier {
       return choose(
           product, group.id, ids.where((id) => id != choice.id).toList());
     if (ids.length < group.max) choose(product, group.id, [...ids, choice.id]);
+  }
+
+  /// [toggle] by ids, as a page's ToggleOption sends them; the group can be
+  /// a nested one (a selected choice's own).
+  void toggleById(dynamic product, String groupId, String choiceId) {
+    final group = findOptionGroup(OptionGroup.fromProduct(product), groupId);
+    if (group == null) return;
+    for (final choice in group.choices) {
+      if (choice.id == choiceId) return toggle(product, group, choice);
+    }
   }
 
   OptionSelection configuration(dynamic product) => OptionSelection.of(
@@ -566,6 +616,23 @@ class Storefront extends ChangeNotifier {
     final presets = deliveryOptions?.presets;
     return {
       if (location != null) 'location': location!.toJson(),
+      'places': [
+        for (final place in places)
+          {
+            ...place.json,
+            'label': place.secondaryText.isEmpty
+                ? place.mainText
+                : '${place.mainText}, ${place.secondaryText}',
+          },
+      ],
+      'cities': [
+        for (final city in cities) {...city.json, 'label': city.name},
+      ],
+      'locating': locating,
+      'locationError': locationError,
+      'storesLoading': storesStatus == StorefrontStatus.loading,
+      'optionGroups': optionGroupBindings(
+          OptionGroup.fromProduct(product), selectionsFor(product)),
       if (stores.isNotEmpty) 'stores': [for (final item in stores) item.json],
       if (store != null) 'store': store!.json,
       if (menu != null) ...{

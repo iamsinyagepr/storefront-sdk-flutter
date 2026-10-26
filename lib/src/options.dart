@@ -82,6 +82,59 @@ class OptionGroup {
   }
 }
 
+/// A product's groups as a page reads them (the `optionGroups` binding):
+/// each group with its choices marked selected or disabled (a full
+/// multi-choice group), and right after it the groups of each selected
+/// choice, one [depth] deeper — the order a page lays them out in.
+List<Map<String, dynamic>> optionGroupBindings(
+    List<OptionGroup> groups, Map<String, List<String>> selected,
+    [int depth = 0]) {
+  final out = <Map<String, dynamic>>[];
+  for (final group in groups) {
+    final ids = selected[group.id] ?? const <String>[];
+    out.add({
+      'id': group.id,
+      'label': group.label,
+      'min': group.min,
+      'max': group.max,
+      'single': group.single,
+      'required': group.required,
+      'depth': depth,
+      'selected_count': ids.length,
+      'choices': [
+        for (final choice in group.choices)
+          {
+            'id': choice.id,
+            'label': choice.label,
+            'price_cents': choice.priceCents,
+            'selected': ids.contains(choice.id),
+            'disabled': !ids.contains(choice.id) &&
+                !group.single &&
+                ids.length >= group.max,
+          },
+      ],
+    });
+    for (final choice in group.choices) {
+      if (ids.contains(choice.id)) {
+        out.addAll(optionGroupBindings(choice.groups, selected, depth + 1));
+      }
+    }
+  }
+  return out;
+}
+
+/// The group [id] among [groups], or among their choices' groups.
+OptionGroup? findOptionGroup(List<OptionGroup> groups, String id) {
+  for (final group in groups) {
+    if (group.id == id) return group;
+    for (final choice in group.choices) {
+      final nested = findOptionGroup(choice.groups, id);
+      if (nested != null) return nested;
+    }
+  }
+  return null;
+}
+
 /// What a set of chosen option ids comes to.
 class OptionSelection {
   const OptionSelection(
