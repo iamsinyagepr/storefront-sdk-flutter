@@ -229,6 +229,16 @@ class StorefrontApi {
   Future<Order> order(String idOrNumber) async => Order.fromJson(
       await _request('GET', '/orders/${_segment(idOrNumber)}', auth: true));
 
+  /// Where the customer pays for their own online order (payment_method
+  /// online): a page to open in their browser, which hands them to the
+  /// business's provider (PayFast). The order waits as awaiting_payment, out
+  /// of the kitchen's sight, until the provider confirms it. 409 not_payable
+  /// when it can't be paid (already paid, cancelled, or payment switched off).
+  Future<Uri> startOnlinePayment(String orderId) async {
+    final body = await _request('POST', '/orders/${_segment(orderId)}/payfast', auth: true);
+    return Uri.parse((body as Map)['url'] as String);
+  }
+
   /// Allowed until the kitchen starts; afterwards the API answers 409.
   Future<Order> cancelOrder(String id, {String? reason}) async =>
       Order.fromJson(await _request('POST', '/orders/${_segment(id)}/cancel',

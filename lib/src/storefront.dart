@@ -522,6 +522,25 @@ class Storefront extends ChangeNotifier {
     _following = null;
   }
 
+  /// Where to pay for [orderId] (the open order by default) online: a page
+  /// to open in the customer's browser. Once the provider confirms the
+  /// payment, the order's status moves on to pending, which [follow] hears.
+  Future<Uri> payOnline([String? orderId]) async {
+    final id = orderId ?? order?.id;
+    if (id == null) throw StateError('No order is open.');
+    if (!connected) throw StateError('Connect to a store to pay online.');
+    await session!.ensure();
+    return _api.startOnlinePayment(id);
+  }
+
+  /// Whether [order] (the open order by default) is paid online and still
+  /// waiting for it.
+  bool awaitingPayment([Order? order]) {
+    final json = (order ?? this.order)?.json;
+    return json != null && json['payment_method'] == 'online' && json['payment_status'] != 'paid' &&
+        json['status'] != 'cancelled' && json['status'] != 'failed';
+  }
+
   /// Cancels [orderId] (the open order by default) while it still can be.
   Future<Order> cancelOrder([String? orderId, String? reason]) async {
     final id = orderId ?? order?.id;

@@ -583,4 +583,29 @@ void main() {
     expect(bindings['locating'], isFalse);
     expect(await storefront.searchPlaces('ab'), isEmpty, reason: 'too short to search');
   });
+
+  test('paying for an online order: where to pay, and whether it still waits', () async {
+    final calls = <http.Request>[];
+    final api = StorefrontApi(
+        StorefrontConfig(apiBaseUrl: 'https://shop.example.com'),
+        token: () => 'customer-token',
+        client: MockClient((request) async {
+          calls.add(request);
+          if (request.url.path == '/api/v1/orders/order-1/payfast') {
+            return http.Response(jsonEncode({'url': 'https://shop.example.com/api/v1/payfast/pay/order-1'}), 200);
+          }
+          return http.Response(jsonEncode({'error': {'code': 'not_payable', 'message': 'This order is already paid for.'}}), 409);
+        }));
+    final url = await api.startOnlinePayment('order-1');
+    expect(url.toString(), 'https://shop.example.com/api/v1/payfast/pay/order-1');
+    expect(calls.single.method, 'POST');
+    expect(calls.single.headers['authorization'], 'Bearer customer-token');
+    await expectLater(api.startOnlinePayment('order-2'), throwsA(isA<StorefrontApiError>()));
+
+    final storefront = Storefront();
+    expect(storefront.awaitingPayment(Order({'id': 'a', 'payment_method': 'online', 'payment_status': 'unpaid', 'status': 'awaiting_payment'})), isTrue);
+    expect(storefront.awaitingPayment(Order({'id': 'b', 'payment_method': 'online', 'payment_status': 'paid', 'status': 'pending'})), isFalse);
+    expect(storefront.awaitingPayment(Order({'id': 'c', 'payment_method': 'cash', 'status': 'pending'})), isFalse);
+    expect(storefront.awaitingPayment(Order({'id': 'd', 'payment_method': 'online', 'status': 'cancelled'})), isFalse);
+  });
 }

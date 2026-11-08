@@ -58,6 +58,9 @@ storefront.checkout.update({
 storefront.checkout.tipPercent(10, storefront.cart.totalCents);
 final quote = await storefront.refreshQuote();
 final order = await storefront.placeOrder(); // then followed live
+// An online order (payment_method 'online') waits as awaiting_payment until
+// the business's provider confirms it: open where to pay in the browser.
+if (storefront.awaitingPayment(order)) launchUrl(await storefront.payOnline(order.id));
 await storefront.submitReview(foodRating: 5); // once it is delivered
 ```
 
