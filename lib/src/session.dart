@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'client.dart';
+import 'errors.dart';
 import 'models.dart';
 
 /// Where a session token is kept between launches. The default keeps it in
@@ -45,6 +46,25 @@ class StorefrontSession extends ChangeNotifier {
       await _set(session);
       return session.token;
     }).whenComplete(() => _starting = null);
+  }
+
+  /// Picks up the session kept from before (its token store) and who it's
+  /// for, so a customer stays signed in, and keeps their orders, across app
+  /// starts. A token the API no longer takes is dropped, and the next
+  /// [ensure] starts a guest. Nothing kept: nothing to do.
+  Future<void> restore() async {
+    token ??= await _store.read();
+    if (token == null || user != null) return;
+    try {
+      user = await api.me();
+      notifyListeners();
+    } on StorefrontApiError catch (failure) {
+      if (failure.status != 401) return;
+      token = null;
+      user = null;
+      await _store.write(null);
+      notifyListeners();
+    }
   }
 
   Future<void> signIn(String email, String password) async =>

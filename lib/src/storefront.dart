@@ -33,6 +33,8 @@ class Storefront extends ChangeNotifier {
     cart.addListener(notifyListeners);
     checkout.addListener(notifyListeners);
     session?.addListener(notifyListeners);
+    // A session kept from an earlier start, with who it's for.
+    session?.restore().ignore();
   }
 
   static Storefront? _instance;

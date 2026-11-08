@@ -616,4 +616,32 @@ void main() {
     expect(storefront.awaitingPayment(Order({'id': 'c', 'payment_method': 'cash', 'status': 'pending'})), isFalse);
     expect(storefront.awaitingPayment(Order({'id': 'd', 'payment_method': 'online', 'status': 'cancelled'})), isFalse);
   });
+
+  test('a kept session is picked up, with its customer; one the API refuses is dropped', () async {
+    final kept = MemoryTokenStore();
+    await kept.write('account-token');
+    final api = StorefrontApi(StorefrontConfig(apiBaseUrl: 'https://shop.example.com'),
+        client: MockClient((request) async {
+          if (request.url.path != '/api/v1/me') return http.Response('{}', 404);
+          if (request.headers['authorization'] != 'Bearer account-token') {
+            return http.Response(jsonEncode({'error': {'code': 'unauthorized', 'message': 'Sign in again.'}}), 401);
+          }
+          return http.Response(jsonEncode({'id': 'u1', 'email': 'ama@example.com', 'is_anonymous': false}), 200);
+        }));
+    final session = StorefrontSession(api, store: kept);
+    await session.restore();
+    expect(session.token, 'account-token');
+    expect(session.signedIn, isTrue);
+
+    final stale = MemoryTokenStore();
+    await stale.write('old-token');
+    final refused = StorefrontSession(api, store: stale);
+    await refused.restore();
+    expect(refused.token, isNull);
+    expect(await stale.read(), isNull);
+
+    final empty = StorefrontSession(api);
+    await empty.restore();
+    expect(empty.token, isNull);
+  });
 }
