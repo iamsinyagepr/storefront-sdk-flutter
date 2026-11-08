@@ -11,7 +11,10 @@ import 'models.dart';
 /// is the one figure the customer chooses.
 class StorefrontCheckout extends ChangeNotifier {
   static const fulfilments = ['delivery', 'pickup'];
-  static const paymentMethods = ['cash', 'card', 'mobile_money', 'wallet'];
+  /// What an app order may be paid by. online is the business's provider
+  /// (PayFast): the order waits as awaiting_payment until it's paid, and
+  /// [Storefront.payOnline] is where.
+  static const paymentMethods = ['online', 'cash', 'card', 'mobile_money', 'wallet'];
 
   String fulfilment = 'delivery';
   String? paymentMethod;

@@ -602,6 +602,14 @@ void main() {
     expect(calls.single.headers['authorization'], 'Bearer customer-token');
     await expectLater(api.startOnlinePayment('order-2'), throwsA(isA<StorefrontApiError>()));
 
+    // The checkout keeps online as the payment method, and sends it: dropped,
+    // the order would be placed with none, straight to the kitchen unpaid.
+    final checkout = StorefrontCheckout()..update({'payment_method': 'online'});
+    expect(checkout.paymentMethod, 'online');
+    expect(checkout.orderBody('store-1', [])['payment_method'], 'online');
+    checkout.update({'payment_method': 'bitcoin'});
+    expect(checkout.paymentMethod, isNull);
+
     final storefront = Storefront();
     expect(storefront.awaitingPayment(Order({'id': 'a', 'payment_method': 'online', 'payment_status': 'unpaid', 'status': 'awaiting_payment'})), isTrue);
     expect(storefront.awaitingPayment(Order({'id': 'b', 'payment_method': 'online', 'payment_status': 'paid', 'status': 'pending'})), isFalse);
