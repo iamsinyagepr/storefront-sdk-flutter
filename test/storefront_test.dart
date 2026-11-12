@@ -84,6 +84,7 @@ MockClient _tenant(List<http.Request> calls) => MockClient((request) async {
           'next_cursor': null,
           'search': {'radius_km': 10, 'widened': false}
         });
+      if (path == '/api/v1/stores/store-1') return json(_store);
       if (path == '/api/v1/stores/store-1/menu') {
         return json({
           'store': _store,
@@ -250,6 +251,20 @@ void main() {
     expect((bindings['categories'] as List).single['name'], 'Mains');
     expect((bindings['cuisines'] as List).single['name'], 'Burgers');
     expect(bindings['cartCount'], 0);
+  });
+
+  test('without the menu, opening a store loads only it and its delivery',
+      () async {
+    final calls = <http.Request>[];
+    final storefront = Storefront.configure(
+        apiBaseUrl: 'https://shop.example.com',
+        client: _tenant(calls),
+        menu: false);
+    await storefront.selectStore('store-1');
+    expect(storefront.store!.name, 'Sunday Kitchen');
+    expect(storefront.menu, isNull);
+    expect(storefront.deliveryOptions, isNotNull);
+    expect(calls.any((call) => call.url.path.endsWith('/menu')), isFalse);
   });
 
   test('options price nested choices and become order selections', () {

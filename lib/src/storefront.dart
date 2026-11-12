@@ -47,11 +47,16 @@ class Storefront extends ChangeNotifier {
   /// A single-store app passes its [storeId]: that store's menu starts
   /// loading at once, and the app can open straight on it — no location or
   /// store to choose ([pinnedStoreId]).
+  ///
+  /// An app whose pages fetch the menu themselves passes `menu: false`:
+  /// choosing a store then loads only the store and its delivery options
+  /// ([selectStore]), and [loadsMenu] says so.
   static Storefront configure({
     required String apiBaseUrl,
     String? storeId,
     StorefrontTokenStore? tokens,
     http.Client? client,
+    bool menu = true,
   }) {
     _instance?.dispose();
     final storefront = _instance = Storefront(
@@ -60,6 +65,7 @@ class Storefront extends ChangeNotifier {
           client: client),
       tokens: tokens,
     );
+    storefront.loadsMenu = menu;
     if (storeId != null && storeId.isNotEmpty) {
       // A failure shows as the menu's error (menuStatus, error), not as an
       // unhandled error at start-up; the menu page offers to try again.
@@ -80,6 +86,10 @@ class Storefront extends ChangeNotifier {
 
   final StorefrontApi? api;
   final StorefrontSession? session;
+
+  /// Whether [selectStore] loads the chosen store's menu (and cuisines), or
+  /// leaves that to the app's pages.
+  bool loadsMenu = true;
   final cart = StorefrontCart();
   final checkout = StorefrontCheckout();
 
@@ -257,8 +267,12 @@ class Storefront extends ChangeNotifier {
 
   /// Opens a store: its menu, cuisines and delivery options. The menu is
   /// required; the other two are optional and never hold it up.
-  Future<void> selectStore(String idOrSlug) async {
+  ///
+  /// Without [loadsMenu] (or with `withMenu: false`), only the store and its
+  /// delivery options: the app's pages fetch their own menu.
+  Future<void> selectStore(String idOrSlug, {bool? withMenu}) async {
     final request = ++_menuRequest;
+    if (!(withMenu ?? loadsMenu)) return _selectStoreOnly(idOrSlug, request);
     menuStatus = StorefrontStatus.loading;
     error = null;
     notifyListeners();
@@ -279,6 +293,25 @@ class Storefront extends ChangeNotifier {
         menuStatus = StorefrontStatus.error;
         error = _message(failure);
       }
+      rethrow;
+    } finally {
+      if (request == _menuRequest) notifyListeners();
+    }
+  }
+
+  Future<void> _selectStoreOnly(String idOrSlug, int request) async {
+    error = null;
+    notifyListeners();
+    try {
+      final next = await _api.store(idOrSlug);
+      final options = await _optional(() => _api.deliveryOptions(next.id));
+      if (request != _menuRequest) return;
+      store = next;
+      menu = null;
+      cuisines = null;
+      deliveryOptions = options;
+    } catch (failure) {
+      if (request == _menuRequest) error = _message(failure);
       rethrow;
     } finally {
       if (request == _menuRequest) notifyListeners();
